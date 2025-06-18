@@ -230,11 +230,19 @@ async def extract_entities(
     ordered_chunks = list(chunks.items())
 
     entity_extract_prompt = PROMPTS["entity_extraction"]
+    
+    # Use medical entity types if provided in global_config or addon_params, otherwise use defaults
+    medical_entity_types = (
+        global_config.get("entity_types") or 
+        global_config.get("addon_params", {}).get("entity_types") or 
+        PROMPTS["DEFAULT_ENTITY_TYPES"]
+    )
+    
     context_base = dict(
         tuple_delimiter=PROMPTS["DEFAULT_TUPLE_DELIMITER"],
         record_delimiter=PROMPTS["DEFAULT_RECORD_DELIMITER"],
         completion_delimiter=PROMPTS["DEFAULT_COMPLETION_DELIMITER"],
-        entity_types=",".join(PROMPTS["DEFAULT_ENTITY_TYPES"]),
+        entity_types=",".join(medical_entity_types),
     )
     continue_prompt = PROMPTS["entiti_continue_extraction"]
     if_loop_prompt = PROMPTS["entiti_if_loop_extraction"]
@@ -477,7 +485,7 @@ async def _find_most_related_community_from_entities(
         if v is not None
     }
     related_community_keys = sorted(
-        related_community_keys_counts.keys(),
+        related_community_datas.keys(),  # Only use keys that exist in related_community_datas
         key=lambda k: (
             related_community_keys_counts[k],
             related_community_datas[k]["report_json"].get("rating", -1),

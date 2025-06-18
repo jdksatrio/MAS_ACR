@@ -228,7 +228,16 @@ For each pair of related entities, extract the following information:
 - target_entity: name of the target entity, as identified in step 1
 - relationship_description: explanation as to why you think the source entity and the target entity are related to each other
 - relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
- Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
+
+IMPORTANT: Focus on medical relationships such as:
+- DISEASE causes SYMPTOM (e.g., "hypertension causes headache")
+- MEDICATION treats DISEASE (e.g., "aspirin treats headache") 
+- DIAGNOSTIC_TEST detects DISEASE (e.g., "CT scan detects stroke")
+- DISEASE affects ANATOMY (e.g., "diabetes affects kidney")
+- PERSON has DISEASE (e.g., "patient has pneumonia")
+- PROCEDURE treats DISEASE (e.g., "surgery treats tumor")
+
+Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
 
 3. Return output in English as a single list of all the entities and relationships identified in steps 1 and 2. Use **{record_delimiter}** as the list delimiter.
 
@@ -243,7 +252,7 @@ Entity_types: [person, technology, mission, organization, location]
 Text:
 while Alex clenched his jaw, the buzz of frustration dull against the backdrop of Taylor's authoritarian certainty. It was this competitive undercurrent that kept him alert, the sense that his and Jordan's shared commitment to discovery was an unspoken rebellion against Cruz's narrowing vision of control and order.
 
-Then Taylor did something unexpected. They paused beside Jordan and, for a moment, observed the device with something akin to reverence. “If this tech can be understood..." Taylor said, their voice quieter, "It could change the game for us. For all of us.”
+Then Taylor did something unexpected. They paused beside Jordan and, for a moment, observed the device with something akin to reverence. "If this tech can be understood..." Taylor said, their voice quieter, "It could change the game for us. For all of us."
 
 The underlying dismissal earlier seemed to falter, replaced by a glimpse of reluctant respect for the gravity of what lay in their hands. Jordan looked up, and for a fleeting heartbeat, their eyes locked with Taylor's, a wordless clash of wills softening into an uneasy truce.
 
@@ -340,7 +349,7 @@ PROMPTS[
 ] = """It appears some entities may have still been missed.  Answer YES | NO if there are still entities that need to be added.
 """
 
-PROMPTS["DEFAULT_ENTITY_TYPES"] = ["organization", "person", "geo", "event"]
+PROMPTS["DEFAULT_ENTITY_TYPES"] = ["person", "disease", "symptom", "medication", "procedure", "anatomy", "diagnostic_test", "medical_device", "organization", "location"]
 PROMPTS["DEFAULT_TUPLE_DELIMITER"] = "<|>"
 PROMPTS["DEFAULT_RECORD_DELIMITER"] = "##"
 PROMPTS["DEFAULT_COMPLETION_DELIMITER"] = "<|COMPLETE|>"
@@ -349,66 +358,58 @@ PROMPTS[
     "local_rag_response"
 ] = """---Role---
 
-You are a helpful assistant responding to questions about data in the tables provided.
-
+You are a medical assistant specializing in extracting key patient information for clinical decision support and imaging recommendation matching.
 
 ---Goal---
 
-Generate a response of the target length and format that responds to the user's question, summarizing all information in the input data tables appropriate for the response length and format, and incorporating any relevant general knowledge.
+Generate a concise, structured medical summary that extracts only the essential information needed for similarity search and ACR appropriateness criteria matching. Focus on key attributes that help identify specific medical variants and imaging recommendations.
 
-If you don't know the answer, just say so. Do not make anything up.
+**Required Output Format:**
+```
+## Clinical Profile for ACR Matching
+- **Primary Condition**: [Main diagnosis/clinical concern from query]
+- **Clinical Context**: [Symptoms, examination findings, severity indicators]
+- **Anatomical Details**: [Specific location, laterality, size if relevant]
+- **Temporal Factors**: [Acute/chronic, time since onset, follow-up timing]
+- **Prior Interventions**: [Previous treatments, surgeries, imaging]
+- **Risk Factors**: [Relevant comorbidities, contraindications]
+- **Clinical Urgency**: [Emergency, urgent, routine]
+- **Age Category**: [Only if explicitly mentioned: pediatric/adult/elderly]
+```
+
+**CRITICAL ANTI-HALLUCINATION RULES:**
+1. **NEVER invent specific patient details** (age numbers, gender, names, dates)
+2. **ONLY extract information explicitly provided in the current query**
+3. **DO NOT use information from historical cases in the knowledge base for patient-specific details**
+4. **Focus on CONDITION characteristics, not patient characteristics**
+5. If demographic info is needed, use only broad categories (pediatric/adult/elderly) and ONLY if explicitly mentioned
+6. For any field without explicit information, write "Not specified in query"
+7. Keep each section concise (1-2 lines maximum)
+
+**Example ACR Variants to Consider:**
+- Asymptomatic vs symptomatic presentations
+- Acute vs chronic conditions  
+- Post-procedural follow-up scenarios
+- Trauma-related vs non-trauma cases
+- Age-specific considerations (pediatric, adult, elderly)
+- Severity classifications (mild, moderate, severe, critical)
+
+**REMEMBER: The knowledge base contains historical patient cases from MIMIC dataset. DO NOT use any patient-specific details (age, gender, names, dates) from these historical cases. Only use the condition-related medical knowledge, not patient demographics.**
+
+If you don't know specific information from the current query, write "Not specified in query". Do not make anything up.
 
 Points supported by data should list their data references as follows:
-
-"This is an example sentence supported by multiple data references [Data: <dataset name> (record ids); <dataset name> (record ids)]."
-
-Do not list more than 5 record ids in a single reference. Instead, list the top 5 most relevant record ids and add "+more" to indicate that there are more.
-
-For example:
-
-"Person X is the owner of Company Y and subject to many allegations of wrongdoing [Data: Sources (15, 16), Reports (1), Entities (5, 7); Relationships (23); Claims (2, 7, 34, 46, 64, +more)]."
-
-where 15, 16, 1, 5, 7, 23, 2, 7, 34, 46, and 64 represent the id (not the index) of the relevant data record.
-
-Do not include information where the supporting evidence for it is not provided.
-
+"[Data: <dataset name> (record ids)]"
 
 ---Target response length and format---
 
 {response_type}
-
 
 ---Data tables---
 
 {context_data}
 
-
----Goal---
-
-Generate a response of the target length and format that responds to the user's question, summarizing all information in the input data tables appropriate for the response length and format, and incorporating any relevant general knowledge.
-
-If you don't know the answer, just say so. Do not make anything up.
-
-Points supported by data should list their data references as follows:
-
-"This is an example sentence supported by multiple data references [Data: <dataset name> (record ids); <dataset name> (record ids)]."
-
-Do not list more than 5 record ids in a single reference. Instead, list the top 5 most relevant record ids and add "+more" to indicate that there are more.
-
-For example:
-
-"Person X is the owner of Company Y and subject to many allegations of wrongdoing [Data: Sources (15, 16), Reports (1), Entities (5, 7); Relationships (23); Claims (2, 7, 34, 46, 64, +more)]."
-
-where 15, 16, 1, 5, 7, 23, 2, 7, 34, 46, and 64 represent the id (not the index) of the relevant data record.
-
-Do not include information where the supporting evidence for it is not provided.
-
-
----Target response length and format---
-
-{response_type}
-
-Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
+Generate a structured clinical profile following the exact format above, focusing ONLY on condition characteristics that would help match this case to appropriate ACR imaging recommendations. DO NOT include any patient-specific details from historical cases.
 """
 
 PROMPTS[
@@ -494,76 +495,58 @@ PROMPTS[
     "global_reduce_rag_response"
 ] = """---Role---
 
-You are a helpful assistant responding to questions about a dataset by synthesizing perspectives from multiple analysts.
-
+You are a medical assistant specializing in synthesizing patient information from multiple medical knowledge sources for clinical decision support and ACR appropriateness criteria matching.
 
 ---Goal---
 
-Generate a response of the target length and format that responds to the user's question, summarize all the reports from multiple analysts who focused on different parts of the dataset.
+Generate a concise, structured medical summary by synthesizing information from multiple medical knowledge sources. Focus on extracting key attributes needed for similarity search and ACR variant matching.
 
-Note that the analysts' reports provided below are ranked in the **descending order of importance**.
+**Required Output Format:**
+```
+## Clinical Profile for ACR Matching
+- **Primary Condition**: [Main diagnosis/clinical concern from query]
+- **Clinical Context**: [Symptoms, examination findings, severity indicators]
+- **Anatomical Details**: [Specific location, laterality, size if relevant]
+- **Temporal Factors**: [Acute/chronic, time since onset, follow-up timing]
+- **Prior Interventions**: [Previous treatments, surgeries, imaging]
+- **Risk Factors**: [Relevant comorbidities, contraindications]
+- **Clinical Urgency**: [Emergency, urgent, routine]
+- **Age Category**: [Only if explicitly mentioned: pediatric/adult/elderly]
+```
 
-If you don't know the answer or if the provided reports do not contain sufficient information to provide an answer, just say so. Do not make anything up.
+**CRITICAL ANTI-HALLUCINATION RULES:**
+1. **NEVER invent specific patient details** (age numbers, gender, names, dates)
+2. **ONLY extract information explicitly provided in the original query**
+3. **DO NOT use information from historical cases in the knowledge base for patient-specific details**
+4. **Focus on CONDITION characteristics, not patient characteristics**
+5. If demographic info is needed, use only broad categories (pediatric/adult/elderly) and ONLY if explicitly mentioned
+6. For any field without explicit information, write "Not specified in query"
+7. Synthesize information from all analyst reports below
+8. Keep each section concise (1-2 lines maximum)
 
-The final response should remove all irrelevant information from the analysts' reports and merge the cleaned information into a comprehensive answer that provides explanations of all the key points and implications appropriate for the response length and format.
+**Example ACR Variants to Consider:**
+- Asymptomatic vs symptomatic presentations
+- Acute vs chronic conditions  
+- Post-procedural follow-up scenarios
+- Trauma-related vs non-trauma cases
+- Age-specific considerations (pediatric, adult, elderly)
+- Severity classifications (mild, moderate, severe, critical)
 
-Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
+**REMEMBER: The knowledge base contains historical patient cases from MIMIC dataset. DO NOT use any patient-specific details (age, gender, names, dates) from these historical cases. Only use the condition-related medical knowledge, not patient demographics.**
 
-The response shall preserve the original meaning and use of modal verbs such as "shall", "may" or "will".
+If you don't know specific information from the current query, write "Not specified in query". Do not make anything up.
 
-The response should also preserve all the data references previously included in the analysts' reports, but do not mention the roles of multiple analysts in the analysis process.
-
-**Do not list more than 5 record ids in a single reference**. Instead, list the top 5 most relevant record ids and add "+more" to indicate that there are more.
-
-For example:
-
-"Person X is the owner of Company Y and subject to many allegations of wrongdoing [Data: Reports (2, 7, 34, 46, 64, +more)]. He is also CEO of company X [Data: Reports (1, 3)]"
-
-where 1, 2, 3, 7, 34, 46, and 64 represent the id (not the index) of the relevant data record.
-
-Do not include information where the supporting evidence for it is not provided.
-
+Preserve all data references from the analyst reports using format: "[Data: <dataset name> (record ids)]"
 
 ---Target response length and format---
 
 {response_type}
-
 
 ---Analyst Reports---
 
 {report_data}
 
-
----Goal---
-
-Generate a response of the target length and format that responds to the user's question, summarize all the reports from multiple analysts who focused on different parts of the dataset.
-
-Note that the analysts' reports provided below are ranked in the **descending order of importance**.
-
-If you don't know the answer or if the provided reports do not contain sufficient information to provide an answer, just say so. Do not make anything up.
-
-The final response should remove all irrelevant information from the analysts' reports and merge the cleaned information into a comprehensive answer that provides explanations of all the key points and implications appropriate for the response length and format.
-
-The response shall preserve the original meaning and use of modal verbs such as "shall", "may" or "will".
-
-The response should also preserve all the data references previously included in the analysts' reports, but do not mention the roles of multiple analysts in the analysis process.
-
-**Do not list more than 5 record ids in a single reference**. Instead, list the top 5 most relevant record ids and add "+more" to indicate that there are more.
-
-For example:
-
-"Person X is the owner of Company Y and subject to many allegations of wrongdoing [Data: Reports (2, 7, 34, 46, 64, +more)]. He is also CEO of company X [Data: Reports (1, 3)]"
-
-where 1, 2, 3, 7, 34, 46, and 64 represent the id (not the index) of the relevant data record.
-
-Do not include information where the supporting evidence for it is not provided.
-
-
----Target response length and format---
-
-{response_type}
-
-Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
+Generate a structured clinical profile following the exact format above, synthesizing information from all analyst reports and focusing ONLY on condition characteristics that would help match this case to appropriate ACR imaging recommendations. DO NOT include any patient-specific details from historical cases.
 """
 
 PROMPTS["fail_response"] = "Sorry, I'm not able to provide an answer to that question."

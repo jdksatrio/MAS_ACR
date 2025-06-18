@@ -21,9 +21,29 @@ async def openai_complete_if_cache(
         if if_cache_return is not None:
             return if_cache_return["return"]
 
-    response = await openai_async_client.chat.completions.create(
-        model=model, messages=messages, **kwargs
-    )
+    # Add retry logic with exponential backoff for rate limits
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            response = await openai_async_client.chat.completions.create(
+                model=model, messages=messages, **kwargs
+            )
+            break
+        except Exception as e:
+            if "rate_limit" in str(e).lower() and attempt < max_retries - 1:
+                import asyncio
+                import random
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"Rate limit hit for {model}, waiting {wait_time:.2f} seconds...")
+                await asyncio.sleep(wait_time)
+                continue
+            elif attempt < max_retries - 1:
+                import asyncio
+                print(f"API error for {model}: {e}, retrying...")
+                await asyncio.sleep(1)
+                continue
+            else:
+                raise e
 
     if hashing_kv is not None:
         await hashing_kv.upsert(

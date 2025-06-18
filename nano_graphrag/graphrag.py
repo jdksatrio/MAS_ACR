@@ -6,7 +6,7 @@ from functools import partial
 from typing import Type, cast
 
 
-from ._llm import gpt_4o_complete, gpt_4o_mini_complete, openai_embedding
+from ._llm import gpt_4o_mini_complete, openai_embedding
 from ._op import (
     chunking_by_token_size,
     extract_entities,
@@ -15,6 +15,7 @@ from ._op import (
     global_query,
 )
 from ._storage import JsonKVStorage, MilvusLiteStorge, NetworkXStorage
+from .neo4j_storage import Neo4jVectorStorage, Neo4jKVStorage, Neo4jGraphStorage
 from ._utils import EmbeddingFunc, compute_mdhash_id, limit_async_func_call, logger
 from .base import (
     BaseGraphStorage,
@@ -36,7 +37,7 @@ class GraphRAG:
     # text chunking
     chunk_token_size: int = 1200
     chunk_overlap_token_size: int = 100
-    tiktoken_model_name: str = "gpt-4o"
+    tiktoken_model_name: str = "gpt-4o-mini"  # Still use this for tokenization approximation
 
     # entity extraction
     entity_extract_max_gleaning: int = 1
@@ -68,21 +69,21 @@ class GraphRAG:
 
     # text embedding
     embedding_func: EmbeddingFunc = field(default_factory=lambda: openai_embedding)
-    embedding_batch_num: int = 32
-    embedding_func_max_async: int = 16
+    embedding_batch_num: int = 2
+    embedding_func_max_async: int = 2
 
-    # LLM
-    best_model_func: callable = gpt_4o_complete
+    # LLM - Using OpenAI 4o mini only
+    best_model_func: callable = gpt_4o_mini_complete
     best_model_max_token_size: int = 32768
-    best_model_max_async: int = 16
+    best_model_max_async: int = 2
     cheap_model_func: callable = gpt_4o_mini_complete
     cheap_model_max_token_size: int = 32768
-    cheap_model_max_async: int = 16
+    cheap_model_max_async: int = 2
 
-    # storage
-    key_string_value_json_storage_cls: Type[BaseKVStorage] = JsonKVStorage
-    vector_db_storage_cls: Type[BaseVectorStorage] = MilvusLiteStorge
-    graph_storage_cls: Type[BaseGraphStorage] = NetworkXStorage
+    # storage - Pure Neo4j configuration
+    key_string_value_json_storage_cls: Type[BaseKVStorage] = Neo4jKVStorage
+    vector_db_storage_cls: Type[BaseVectorStorage] = Neo4jVectorStorage
+    graph_storage_cls: Type[BaseGraphStorage] = Neo4jGraphStorage
     enable_llm_cache: bool = False
 
     # extension
