@@ -1,129 +1,139 @@
-from typing import Dict, Any, TypedDict, Annotated, Optional
-import sys
 import os
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-import operator
+import asyncio
+from typing import Dict, Any, List, Optional
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.graph import StateGraph
+import sys
 
-# Add the retrieve_acr directory to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'retrieve_acr'))
+# Add parent directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
-from medical_procedure_recommender_vectorized import MedicalProcedureRecommenderVectorized
-
-# Import AgentState from main module
-try:
-    from .graphrag_node import AgentState
-except ImportError:
-    # Fallback for direct execution
-    from graphrag_node import AgentState
+from langgraph_integration.graphrag_node import AgentState
 
 class ACRRetrievalNode:
-    """
-    LangGraph node for ACR (American College of Radiology) procedure recommendations.
-    Uses VECTOR INDEXES for fast similarity search to find appropriate medical procedures.
-    """
-    
     def __init__(
         self,
+        retrieval_method: str = "colbert",
         neo4j_uri: str = "bolt://localhost:7687",
         neo4j_user: str = "neo4j", 
         neo4j_password: str = None,
         embedding_provider: str = "pubmedbert",
         embedding_model: str = "NeuML/pubmedbert-base-embeddings",
         openai_api_key: str = None,
-        ollama_base_url: str = "http://localhost:11434"
+        ollama_base_url: str = "http://localhost:11434",
+        colbert_index_path: str = None,
+        debug: bool = True
     ):
-        self.neo4j_password = neo4j_password
-        self.recommender_params = {
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "embedding_provider": embedding_provider,
-            "embedding_model": embedding_model,
-            "openai_api_key": openai_api_key,
-            "ollama_base_url": ollama_base_url
-        }
-        self.recommender = None
-        self.initialized = False
-    
+        self.retrieval_method = retrieval_method
+        self.neo4j_uri = neo4j_uri
+        self.neo4j_user = neo4j_user
+        self.neo4j_password = neo4j_password or os.getenv("NEO4J_PASSWORD", "medgraphrag")
+        self.embedding_provider = embedding_provider
+        self.embedding_model = embedding_model
+        self.openai_api_key = openai_api_key
+        self.ollama_base_url = ollama_base_url
+        self.colbert_index_path = colbert_index_path
+        self.debug = debug
+        
+        self.retriever = None
+        
+        if self.debug:
+            print(f"ACR Retrieval Node initialized with method: {retrieval_method}")
+            print(f"Index path: {colbert_index_path}")
+
     async def initialize(self, neo4j_password: str = None):
-        """Initialize the ACR recommender"""
-        if self.initialized and self.recommender:
-            return
+        if neo4j_password:
+            self.neo4j_password = neo4j_password
             
-        password = neo4j_password or self.neo4j_password
-        if not password:
-            raise ValueError("Neo4j password is required for ACR retrieval")
-        
+        if self.retrieval_method == "colbert":
+            await self._initialize_colbert()
+        elif self.retrieval_method == "neo4j":
+            await self._initialize_neo4j(neo4j_password)
+
+    async def _initialize_colbert(self):
         try:
-            self.recommender = MedicalProcedureRecommenderVectorized(
-                neo4j_password=password,
-                **self.recommender_params
+            from retrieve_acr.colbert_acr_retriever import ColBERTACRRetriever
+            self.retriever = ColBERTACRRetriever(
+                index_path=self.colbert_index_path,
+                debug=self.debug
             )
-            self.initialized = True
-            print("VECTORIZED ACR Retrieval node initialized (using vector indexes)")
-            
+            if self.debug:
+                print("ColBERT ACR Retrieval initialized")
         except Exception as e:
-            print(f"ACR Retrieval initialization failed: {e}")
-            raise
-    
-    def close(self):
-        """Close the Neo4j connection"""
-        if self.recommender:
-            self.recommender.close()
-    
-    async def __call__(self, state: AgentState) -> Dict[str, Any]:
-        """
-        LangGraph node function - processes medical queries and returns ACR procedure recommendations.
-        """
-        if not self.initialized:
-            # Try to get password from state or environment
-            neo4j_password = state.get("neo4j_password") or os.getenv("NEO4J_PASSWORD")
-            await self.initialize(neo4j_password)
-        
-        user_query = state.get("user_query", "")
-        if not user_query:
-            # Extract query from messages if not in state
-            for message in reversed(state.get("messages", [])):
-                if isinstance(message, HumanMessage):
-                    user_query = message.content
-                    break
-        
-        if not user_query:
-            error_message = AIMessage(
-                content="No medical query found for ACR procedure recommendation",
-                additional_kwargs={"error": True, "source": "acr_retrieval_node"}
-            )
-            return {
-                "messages": [error_message],
-                "acr_recommendations": {},
-                "next_step": "error_handling"
-            }
-        
+            error_msg = f"Failed to initialize ColBERT ACR retrieval: {str(e)}"
+            if self.debug:
+                print(f"Error: {error_msg}")
+            raise RuntimeError(error_msg)
+
+    async def _initialize_neo4j(self, neo4j_password: str = None):
         try:
-            # Get ACR procedure recommendations
-            recommendations = self.recommender.recommend_procedures(user_query)
+            from retrieve_acr.medical_procedure_recommender_vectorized import MedicalProcedureRecommenderVectorized
             
-            # Format the recommendations for the response
-            if "error" in recommendations:
-                response_content = f"ACR Retrieval Error: {recommendations['error']}"
-                response_message = AIMessage(
-                    content=response_content,
-                    additional_kwargs={
-                        "error": True,
-                        "source": "acr_retrieval_node",
-                        "acr_recommendations": recommendations
-                    }
-                )
-                next_step = "error_handling"
+            final_password = neo4j_password or self.neo4j_password
+            
+            self.retriever = MedicalProcedureRecommenderVectorized(
+                neo4j_uri=self.neo4j_uri,
+                neo4j_user=self.neo4j_user,
+                neo4j_password=final_password,
+                embedding_provider=self.embedding_provider,
+                embedding_model=self.embedding_model,
+                openai_api_key=self.openai_api_key,
+                ollama_base_url=self.ollama_base_url,
+                debug=self.debug
+            )
+            if self.debug:
+                print("Neo4j Vectorized ACR Retrieval initialized")
+        except Exception as e:
+            error_msg = f"Failed to initialize Neo4j ACR retrieval: {str(e)}"
+            if self.debug:
+                print(f"Error: {error_msg}")
+            raise RuntimeError(error_msg)
+
+    def close(self):
+        if self.retriever and hasattr(self.retriever, 'close'):
+            self.retriever.close()
+
+    async def __call__(self, state: AgentState) -> Dict[str, Any]:
+        """Execute ACR retrieval based on user query"""
+        try:
+            messages = state.get("messages", [])
+            if not messages:
+                user_query = state.get("user_query", "")
             else:
+                last_message = messages[-1]
+                user_query = last_message.content if hasattr(last_message, 'content') else str(last_message)
+            
+            if not user_query.strip():
+                return {
+                    "messages": [AIMessage(content="No valid query provided for ACR retrieval")],
+                    "acr_recommendations": {"error": "No query provided"},
+                    "next_step": "error_handling"
+                }
+            
+            if not self.retriever:
+                await self.initialize()
+            
+            if self.debug:
+                print(f"Processing query: '{user_query}'")
+            
+            recommendations = self.retriever.recommend_procedures(user_query)
+            
+            if recommendations and "error" not in recommendations:
                 response_content = self._format_recommendations_summary(recommendations)
                 response_message = AIMessage(
                     content=response_content,
                     additional_kwargs={
                         "source": "acr_retrieval_node",
+                        "retrieval_method": self.retrieval_method,
                         "acr_recommendations": recommendations
                     }
                 )
                 next_step = "acr_analysis"
+            
+            if self.debug:
+                print(f"ACR retrieval completed")
             
             return {
                 "messages": [response_message],
@@ -133,8 +143,12 @@ class ACRRetrievalNode:
             
         except Exception as e:
             error_message = AIMessage(
-                content=f"ACR procedure recommendation failed: {str(e)}",
-                additional_kwargs={"error": True, "source": "acr_retrieval_node"}
+                content=f"ACR procedure recommendation failed ({self.retrieval_method}): {str(e)}",
+                additional_kwargs={
+                    "error": True, 
+                    "source": "acr_retrieval_node",
+                    "retrieval_method": self.retrieval_method
+                }
             )
             
             return {
@@ -142,16 +156,37 @@ class ACRRetrievalNode:
                 "acr_recommendations": {"error": str(e)},
                 "next_step": "error_handling"
             }
-    
+
     def _format_recommendations_summary(self, recommendations: Dict) -> str:
         """Format ACR recommendations into a readable summary"""
         if "error" in recommendations:
             return f"Error: {recommendations['error']}"
         
-        summary = f"ACR Procedure Recommendations for: {recommendations['query']}\n\n"
+        if recommendations.get("retrieval_method") == "colbert":
+            summary = f"ColBERT ACR Recommendations for: {recommendations['query']}\n\n"
+            
+            if "best_variant" in recommendations:
+                summary += f"**Top Match:**\n"
+                summary += f"• {recommendations['best_variant']['content']}\n"
+                summary += f"• Confidence: {recommendations['best_variant']['relevance_score']:.3f}\n\n"
+                
+                procedures = recommendations.get('usually_appropriate_procedures', [])
+                if procedures:
+                    summary += f"**Top ACR Criteria ({len(procedures)} total):**\n"
+                    for i, proc in enumerate(procedures[:5], 1):
+                        summary += f"{i}. {proc['title'][:120]}...\n"
+                        summary += f"   • Score: {proc['relevance_score']:.4f}\n"
+                    
+                    if len(procedures) > 5:
+                        summary += f"... and {len(procedures) - 5} more criteria\n"
+                else:
+                    summary += "**No procedures found for this query.**\n"
+            
+            return summary
+        
+        summary = f"Neo4j ACR Recommendations for: {recommendations['query']}\n\n"
         
         if "best_variant" in recommendations:
-            # New format with best variant
             summary += f"**Top Matching Condition:**\n"
             summary += f"• {recommendations['top_condition']['condition_id']}\n"
             summary += f"• Similarity: {recommendations['top_condition']['condition_similarity']:.3f}\n\n"
@@ -163,7 +198,7 @@ class ACRRetrievalNode:
             procedures = recommendations['usually_appropriate_procedures']
             if procedures:
                 summary += f"**Usually Appropriate Procedures ({len(procedures)}):**\n"
-                for i, procedure in enumerate(procedures[:5], 1):  # Limit to top 5
+                for i, procedure in enumerate(procedures[:5], 1):
                     summary += f"{i}. {procedure['procedure_id']}\n"
                     if procedure.get('dosage'):
                         summary += f"   • Radiation Dosage: {procedure['dosage']}\n"
@@ -174,12 +209,10 @@ class ACRRetrievalNode:
                 summary += "**No usually appropriate procedures found for this variant.**\n"
         
         else:
-            # Old format with multiple conditions
             summary += f"**Similar Conditions Found:**\n"
             for i, condition in enumerate(recommendations['similar_conditions'][:3], 1):
                 summary += f"{i}. {condition['condition_id']} (similarity: {condition['similarity_score']:.3f})\n"
             
-            # Count total procedures
             total_appropriate = len(recommendations['aggregated_procedures']['USUALLY_APPROPRIATE'])
             total_maybe = len(recommendations['aggregated_procedures']['MAYBE_APPROPRIATE'])
             
