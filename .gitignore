@@ -1,0 +1,83 @@
+*.txt
+dataset
+dataset_paper
+dataset_test
+test*
+.dockerignore
+app.sh
+acr_colbert_ready_to_use.tar.gz
+.ragatouille/
+checkpoints/
+model.safetensors
+*.md
+*.gz
+### Python template
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache directories
+nano_graphrag_cache*/
+__pycache__/
+
+# Large data files
+*.json
+!requirements*.json
+*.xlsx
+*.csv
+*.txt
+!requirements*.txt
+!*.md
+
+# ACR PDFs (large files)
+acr_pdfs/
+
+# API keys and sensitive files
+api_key.txt
+*.key
+.env
+
+# Archive and backup files
+archive_old/
+backup*/
+*.backup
+
+# Enrichment outputs
+enrichment_outputs/
+
+# Conda environment files (keep the main one)
+# medgraphrag.yml - keep this one
+medgraphrag_gpu.yml
